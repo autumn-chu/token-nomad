@@ -1,0 +1,31 @@
+[package]
+name = "token-nomad"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "Portable coding-agent profiles, endpoint launcher, and safe migration plans"
+license = "MIT"
+repository = "https://github.com/autumn-chu/token-nomad"
+
+[[bin]]
+name = "nomad"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+inquire = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+toml_edit = "0.23"
+unicode-width = "0.2"
+url = "2"
+regex = "1"
+rustix = { version = "1", features = ["fs"] }
+sha2 = "0.10"
+tempfile = "3"
+
+[dev-dependencies]
+portable-pty = "0.9"
