@@ -85,7 +85,7 @@ pub fn entry_kind(path: &Path) -> Result<Option<EntryKind>> {
 
 pub fn entry_mode(path: &Path, expected: EntryKind) -> Result<u32> {
     let entry = open_expected_entry(path, expected)?;
-    Ok(u32::from(fstat(entry)?.st_mode & 0o777))
+    Ok(permission_bits(fstat(entry)?.st_mode))
 }
 
 pub fn set_entry_mode(path: &Path, mode: u32, expected: EntryKind) -> Result<()> {
@@ -130,7 +130,7 @@ pub fn read_regular(path: &Path, max_bytes: u64) -> Result<Option<FileData>> {
     }
     Ok(Some(FileData {
         bytes,
-        mode: u32::from(stat.st_mode & 0o777),
+        mode: permission_bits(stat.st_mode),
     }))
 }
 
@@ -338,7 +338,7 @@ fn existing_regular_mode(parent: &OwnedFd, name: &OsStr, path: &Path) -> Result<
                     path.display()
                 );
             }
-            Ok(Some(u32::from(stat.st_mode & 0o777)))
+            Ok(Some(permission_bits(stat.st_mode)))
         }
         Err(Errno::NOENT) => Ok(None),
         Err(error) => Err(error).with_context(|| {
@@ -348,6 +348,10 @@ fn existing_regular_mode(parent: &OwnedFd, name: &OsStr, path: &Path) -> Result<
             )
         }),
     }
+}
+
+fn permission_bits<T: Into<u32>>(mode: T) -> u32 {
+    mode.into() & 0o777
 }
 
 fn open_expected_entry(path: &Path, expected: EntryKind) -> Result<OwnedFd> {

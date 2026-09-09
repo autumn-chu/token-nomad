@@ -59,10 +59,6 @@ impl RunningSelector {
         self.wait_until(needle, |output| output[cursor..].contains(needle));
     }
 
-    fn wait_for_fzf_selection(&mut self, profile: &str) {
-        self.wait_until(profile, |output| has_fzf_selection(output, profile));
-    }
-
     fn send(&mut self, bytes: &[u8]) {
         let mut writer = self.writer.lock().unwrap();
         writer.write_all(bytes).unwrap();
@@ -89,17 +85,6 @@ impl RunningSelector {
         }
         (status.exit_code(), self.output)
     }
-}
-
-fn has_fzf_selection(output: &str, profile: &str) -> bool {
-    output.match_indices(profile).any(|(index, _)| {
-        let prefix = &output[..index];
-        let Some(style_start) = prefix.rfind("\x1b[") else {
-            return false;
-        };
-        let style = &prefix[style_start..];
-        style.ends_with('m') && style.contains('7')
-    })
 }
 
 fn require_fzf() {
@@ -198,10 +183,13 @@ fn spawn_selector_with_args(root: &TempDir, size: PtySize, arguments: &[&str]) -
                 break;
             }
             let text = String::from_utf8_lossy(&buffer[..count]).into_owned();
-            if text.contains("\x1b[6n")
+            let position_queries = text.match_indices("\x1b[6n").count();
+            if position_queries > 0
                 && let Ok(mut writer) = response_writer.lock()
             {
-                let _ = writer.write_all(b"\x1b[1;1R");
+                for _ in 0..position_queries {
+                    let _ = writer.write_all(b"\x1b[1;1R");
+                }
                 let _ = writer.flush();
             }
             if sender.send(text).is_err() {
@@ -373,7 +361,7 @@ fn fzf_selector_honors_last_profile_cursor_without_reordering_profiles() {
             pixel_height: 0,
         },
     );
-    selector.wait_for_fzf_selection("profile-04");
+    selector.wait_for("profile-09");
     let profile00 = selector.output.find("profile-00").unwrap();
     let profile04 = selector.output.find("profile-04").unwrap();
     let profile09 = selector.output.find("profile-09").unwrap();
