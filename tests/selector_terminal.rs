@@ -361,7 +361,9 @@ fn fzf_selector_honors_last_profile_cursor_without_reordering_profiles() {
             pixel_height: 0,
         },
     );
+    let phase = selector.cursor();
     selector.wait_for("profile-09");
+    selector.wait_for_after(phase, "Profile: profile-04");
     let profile00 = selector.output.find("profile-00").unwrap();
     let profile04 = selector.output.find("profile-04").unwrap();
     let profile09 = selector.output.find("profile-09").unwrap();
