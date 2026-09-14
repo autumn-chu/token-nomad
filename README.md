@@ -10,7 +10,7 @@ The tool keeps portable data typed and explicit. It can carry profile metadata, 
 - Bash and `jq` for the Claude statusline renderer.
 - A locally installed `claude` or `codex` executable for launching an agent.
 
-The built-in selector is the default and needs no extra selector dependency. To opt into `selector = "fzf"`, install fzf with the package manager you use:
+The native terminal UI is the default and needs no external selector program. To opt into `selector = "fzf"`, install fzf with the package manager you use:
 
 ```sh
 # macOS
@@ -61,7 +61,7 @@ The starter configuration contains only Claude and Codex native profiles. Add an
 
 ```toml
 version = 1
-selector = "builtin"
+selector = "tui"
 
 [endpoints.official]
 auth = "native"
@@ -80,7 +80,7 @@ label = "Implementation"
 description = "Implement the selected change"
 tags = ["build"]
 
-[keybindings.fzf]
+[keybindings.tui]
 accept = "enter"
 cancel = "esc"
 previous = "up"
@@ -90,9 +90,12 @@ preview_below = "ctrl-/"
 preview_right = "alt-/"
 choose_agent = "ctrl-l"
 choose_endpoint = "ctrl-e"
+help = "f1"
 ```
 
-The built-in selector has fixed controls: type to filter, `Up`/`Down` to move, `Enter` to launch, and `Esc` to cancel. `[keybindings.fzf]` applies only when `selector = "fzf"`. Its binding names are `accept`, `cancel`, `previous`, `next`, `toggle_preview`, `preview_below`, `preview_right`, `choose_agent`, and `choose_endpoint`. Their defaults are `enter`, `esc`, `up`, `down`, `ctrl-p`, `ctrl-/`, `alt-/`, `ctrl-l`, and `ctrl-e`, with `Ctrl-C` reserved for cancellation. Bindings may name only supported keys; shell actions and unmodified printable keys are rejected so ordinary typing remains fzf search.
+The native TUI keeps search, profile context, details, and agent or endpoint menus on one screen. Type to fuzzy-filter all profile metadata, use `Up`/`Down` to move, `Enter` to launch, `Ctrl-L` to filter agents, `Ctrl-E` to choose a temporary endpoint for one launch, and `F1` for contextual help. `Esc` returns from a menu; at the profile list it clears a non-empty search before a second press cancels. `Ctrl-P` toggles details, while `Ctrl-/` and `Alt-/` place them below or to the right; unbound `PgUp` and `PgDn` scroll long details, and configured actions take precedence over this convenience. A command-line `--agent` filter stays fixed. An initial API-key `--endpoint` infers its compatible agent filter when `--agent` is omitted, while a native endpoint keeps all agents visible. Switching the agent in the TUI clears a temporary endpoint only when it is incompatible with the new filter.
+
+`[keybindings.tui]` supports `accept`, `cancel`, `previous`, `next`, `toggle_preview`, `preview_below`, `preview_right`, `choose_agent`, `choose_endpoint`, and `help`. `[keybindings.fzf]` supports the same action names except `help`. The first nine defaults are `enter`, `esc`, `up`, `down`, `ctrl-p`, `ctrl-/`, `alt-/`, `ctrl-l`, and `ctrl-e`; native help defaults to `f1`. The sections are independent, `selector = "builtin"` retains the legacy fixed-control selector, and `selector = "fzf"` retains fzf behavior. `Ctrl-C` is always cancellation. Both sections accept `enter`, `esc`, `up`, `down`, `tab`, `btab`, `backspace`, `delete`, `home`, `end`, `pgup`, `pgdn`, and modified ASCII letters or `/`; the native section also accepts `left`, `right`, and `f1` through `f12`. `ctrl-m`, `ctrl-i`, `ctrl-h`, and `ctrl-[` canonicalize to `enter`, `tab`, `backspace`, and `esc`. Unmodified printable keys remain search input.
 
 ## Portable export and migration
 

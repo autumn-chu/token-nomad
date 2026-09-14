@@ -4,7 +4,7 @@ Contributions should preserve the portable data boundary, keep agent targets unt
 
 ## Development environment
 
-Use Rust 1.90 and keep `Cargo.lock` synchronized with `Cargo.toml`. The built-in selector needs no additional selector dependency; install `fzf` only when developing or testing the optional fzf selector. The complete suite also requires Bash and `jq` for the statusline renderer. The repository uses a worktree per task so the primary checkout stays clean:
+Use Rust 1.90 and keep `Cargo.lock` synchronized with `Cargo.toml`. The native TUI is compiled into Nomad; install `fzf` only when developing or testing the optional fzf selector. The complete suite also requires Bash and `jq` for the statusline renderer. The repository uses a worktree per task so the primary checkout stays clean:
 
 ```sh
 git worktree add ../token-nomad-worktrees/<task> -b feat/<task> main

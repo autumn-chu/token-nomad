@@ -1,7 +1,7 @@
 version = 1
-selector = "builtin"
+selector = "tui"
 
-# Set selector = "fzf" only when fzf is installed. The built-in selector uses fixed controls.
+# Omit selector for the native TUI default. Use "builtin" for the legacy fixed-control selector or "fzf" when fzf is installed.
 
 [endpoints.official]
 auth = "native"
@@ -20,8 +20,8 @@ label = "Implementation"
 description = "Implement the selected change"
 tags = ["build"]
 
-[keybindings.fzf]
-# These bindings apply only to selector = "fzf". Plain typing remains search and Ctrl-C cancels.
+[keybindings.tui]
+# Plain typing remains search and Ctrl-C always cancels.
 accept = "enter"
 cancel = "esc"
 previous = "up"
@@ -31,3 +31,4 @@ preview_below = "ctrl-/"
 preview_right = "alt-/"
 choose_agent = "ctrl-l"
 choose_endpoint = "ctrl-e"
+help = "f1"
