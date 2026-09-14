@@ -1,0 +1,33 @@
+version = 1
+selector = "builtin"
+
+# Set selector = "fzf" only when fzf is installed. The built-in selector uses fixed controls.
+
+[endpoints.official]
+auth = "native"
+
+[profiles.review]
+agent = "claude"
+endpoint = "official"
+label = "Review"
+description = "Review the current change"
+tags = ["review"]
+
+[profiles.implementation]
+agent = "codex"
+endpoint = "official"
+label = "Implementation"
+description = "Implement the selected change"
+tags = ["build"]
+
+[keybindings.fzf]
+# These bindings apply only to selector = "fzf". Plain typing remains search and Ctrl-C cancels.
+accept = "enter"
+cancel = "esc"
+previous = "up"
+next = "down"
+toggle_preview = "ctrl-p"
+preview_below = "ctrl-/"
+preview_right = "alt-/"
+choose_agent = "ctrl-l"
+choose_endpoint = "ctrl-e"
