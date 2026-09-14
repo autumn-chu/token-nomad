@@ -79,6 +79,7 @@ pub struct Config {
 #[serde(rename_all = "kebab-case")]
 pub enum Selector {
     #[default]
+    Tui,
     Builtin,
     Fzf,
 }
@@ -87,7 +88,34 @@ pub enum Selector {
 #[serde(deny_unknown_fields)]
 pub struct Keybindings {
     #[serde(default)]
+    pub tui: TuiKeybindings,
+    #[serde(default)]
     pub fzf: FzfKeybindings,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TuiKeybindings {
+    #[serde(default = "default_accept")]
+    pub accept: String,
+    #[serde(default = "default_cancel")]
+    pub cancel: String,
+    #[serde(default = "default_previous")]
+    pub previous: String,
+    #[serde(default = "default_next")]
+    pub next: String,
+    #[serde(default = "default_toggle_preview")]
+    pub toggle_preview: String,
+    #[serde(default = "default_preview_below")]
+    pub preview_below: String,
+    #[serde(default = "default_preview_right")]
+    pub preview_right: String,
+    #[serde(default = "default_choose_agent")]
+    pub choose_agent: String,
+    #[serde(default = "default_choose_endpoint")]
+    pub choose_endpoint: String,
+    #[serde(default = "default_help")]
+    pub help: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -129,7 +157,67 @@ fzf_defaults!(
     default_preview_right = "alt-/",
     default_choose_agent = "ctrl-l",
     default_choose_endpoint = "ctrl-e",
+    default_help = "f1",
 );
+
+impl Default for TuiKeybindings {
+    fn default() -> Self {
+        Self {
+            accept: default_accept(),
+            cancel: default_cancel(),
+            previous: default_previous(),
+            next: default_next(),
+            toggle_preview: default_toggle_preview(),
+            preview_below: default_preview_below(),
+            preview_right: default_preview_right(),
+            choose_agent: default_choose_agent(),
+            choose_endpoint: default_choose_endpoint(),
+            help: default_help(),
+        }
+    }
+}
+
+impl TuiKeybindings {
+    pub fn canonicalize(&mut self) -> Result<()> {
+        self.accept = normalize_tui_key(&self.accept)?;
+        self.cancel = normalize_tui_key(&self.cancel)?;
+        self.previous = normalize_tui_key(&self.previous)?;
+        self.next = normalize_tui_key(&self.next)?;
+        self.toggle_preview = normalize_tui_key(&self.toggle_preview)?;
+        self.preview_below = normalize_tui_key(&self.preview_below)?;
+        self.preview_right = normalize_tui_key(&self.preview_right)?;
+        self.choose_agent = normalize_tui_key(&self.choose_agent)?;
+        self.choose_endpoint = normalize_tui_key(&self.choose_endpoint)?;
+        self.help = normalize_tui_key(&self.help)?;
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let bindings = [
+            ("accept", &self.accept),
+            ("cancel", &self.cancel),
+            ("previous", &self.previous),
+            ("next", &self.next),
+            ("toggle_preview", &self.toggle_preview),
+            ("preview_below", &self.preview_below),
+            ("preview_right", &self.preview_right),
+            ("choose_agent", &self.choose_agent),
+            ("choose_endpoint", &self.choose_endpoint),
+            ("help", &self.help),
+        ];
+        let mut keys = std::collections::BTreeSet::new();
+        for (action, key) in bindings {
+            let key = normalize_tui_key(key)?;
+            if key == "ctrl-c" {
+                bail!("Ctrl-C is reserved for cancellation and cannot be rebound");
+            }
+            if !keys.insert(key) {
+                bail!("TUI keybindings must not use the same key more than once ({action})");
+            }
+        }
+        Ok(())
+    }
+}
 
 impl Default for FzfKeybindings {
     fn default() -> Self {
@@ -233,6 +321,66 @@ pub fn normalize_fzf_key(value: &str) -> Result<String> {
     bail!("Fzf keybindings must use a named key or ctrl-/alt- modifier key")
 }
 
+pub fn normalize_tui_key(value: &str) -> Result<String> {
+    if value.is_empty() || value.trim() != value || !value.is_ascii() {
+        bail!("TUI keybindings must use a supported named key or ctrl-/alt- modifier key");
+    }
+    let key = value.to_ascii_lowercase();
+    if [
+        "enter",
+        "esc",
+        "up",
+        "down",
+        "left",
+        "right",
+        "tab",
+        "btab",
+        "backspace",
+        "delete",
+        "home",
+        "end",
+        "pgup",
+        "pgdn",
+        "f1",
+        "f2",
+        "f3",
+        "f4",
+        "f5",
+        "f6",
+        "f7",
+        "f8",
+        "f9",
+        "f10",
+        "f11",
+        "f12",
+    ]
+    .contains(&key.as_str())
+    {
+        return Ok(key);
+    }
+    if let Some(suffix) = key.strip_prefix("ctrl-") {
+        return match suffix {
+            "m" => Ok("enter".to_owned()),
+            "i" => Ok("tab".to_owned()),
+            "h" => Ok("backspace".to_owned()),
+            "[" => Ok("esc".to_owned()),
+            _ if suffix.len() == 1
+                && (suffix.as_bytes()[0].is_ascii_lowercase() || suffix == "/") =>
+            {
+                Ok(key)
+            }
+            _ => bail!("TUI keybindings must use a supported named key or ctrl-/alt- modifier key"),
+        };
+    }
+    if let Some(suffix) = key.strip_prefix("alt-")
+        && suffix.len() == 1
+        && (suffix.as_bytes()[0].is_ascii_lowercase() || suffix == "/")
+    {
+        return Ok(key);
+    }
+    bail!("TUI keybindings must use a supported named key or ctrl-/alt- modifier key")
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Integration {
@@ -309,6 +457,8 @@ impl Config {
         }
         config.keybindings.fzf.canonicalize()?;
         config.keybindings.fzf.validate()?;
+        config.keybindings.tui.canonicalize()?;
+        config.keybindings.tui.validate()?;
         let absolute = if path.is_absolute() {
             path.to_owned()
         } else {

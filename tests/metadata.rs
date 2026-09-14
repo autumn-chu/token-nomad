@@ -14,18 +14,26 @@ fn load(text: &str) -> Config {
 }
 
 #[test]
-fn existing_profiles_keep_builtin_selector_and_empty_metadata_defaults() {
+fn existing_profiles_use_native_tui_and_empty_metadata_defaults() {
     let config = load(
         "version = 1\n[endpoints.official]\nauth = 'native'\n[profiles.codex]\nagent = 'codex'\nendpoint = 'official'\n",
     );
 
-    assert_eq!(config.selector, Selector::Builtin);
+    assert_eq!(config.selector, Selector::Tui);
     let profile = config.profiles.get("codex").unwrap();
     assert_eq!(profile.agent, Agent::Codex);
     assert_eq!(profile.label, None);
     assert_eq!(profile.description, None);
     assert!(profile.tags.is_empty());
     assert_eq!(profile.order, None);
+}
+
+#[test]
+fn builtin_selector_remains_an_explicit_compatibility_option() {
+    let config = load(
+        "version = 1\nselector = 'builtin'\n[endpoints.official]\nauth = 'native'\n[profiles.codex]\nagent = 'codex'\nendpoint = 'official'\n",
+    );
+    assert_eq!(config.selector, Selector::Builtin);
 }
 
 #[test]

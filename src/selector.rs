@@ -11,6 +11,8 @@ use std::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+mod tui;
+
 const REPLACEMENT_CHARACTER: char = '\u{fffd}';
 const CHOOSE_AGENT_QUERY: &str = "\u{200b}";
 const CHOOSE_ENDPOINT_QUERY: &str = "\u{200c}";
@@ -22,6 +24,7 @@ struct Item {
     order: i32,
     label: String,
     agent: String,
+    endpoint: String,
     model: String,
     reasoning: String,
     tags: String,
@@ -47,17 +50,20 @@ pub fn select(
     agent_filter: Option<Agent>,
     endpoint_override: Option<&str>,
 ) -> Result<Option<Selection>> {
-    let items = items(config, agent_filter);
-    if items.is_empty() {
-        bail!("No enabled profiles");
-    }
     match config.selector {
-        Selector::Builtin => select_builtin(items, last_profile).map(|selection| {
-            selection.map(|profile| Selection {
-                profile,
-                endpoint: endpoint_override.map(str::to_owned),
+        Selector::Tui => tui::select(config, last_profile, agent_filter, endpoint_override),
+        Selector::Builtin => {
+            let items = items(config, agent_filter);
+            if items.is_empty() {
+                bail!("No enabled profiles");
+            }
+            select_builtin(items, last_profile).map(|selection| {
+                selection.map(|profile| Selection {
+                    profile,
+                    endpoint: endpoint_override.map(str::to_owned),
+                })
             })
-        }),
+        }
         Selector::Fzf => select_fzf(
             config,
             config_path,
@@ -225,6 +231,7 @@ fn item(id: &str, profile: &Profile) -> Item {
         order: profile.order.unwrap_or(0),
         label,
         agent: agent.to_owned(),
+        endpoint,
         model,
         reasoning,
         tags,
@@ -259,7 +266,7 @@ fn select_fzf(
     initial_agent: Option<Agent>,
     initial_endpoint: Option<&str>,
 ) -> Result<Option<Selection>> {
-    let executable = launcher::locate(Path::new("fzf")).context("fzf selector is configured but fzf is unavailable; set selector = \"builtin\" to use the built-in selector")?;
+    let executable = launcher::locate(Path::new("fzf")).context("fzf selector is configured but fzf is unavailable; remove the selector setting to use the native TUI")?;
     let current_exe =
         std::env::current_exe().context("Cannot resolve Nomad executable for fzf preview")?;
     let preview = format!(
@@ -546,10 +553,10 @@ fn compatible_endpoints(config: &Config, agent: Option<Agent>) -> Vec<(String, S
         .filter(|(_, endpoint)| agent.is_none_or(|agent| endpoint_is_compatible(agent, endpoint)))
         .map(|(name, endpoint)| {
             let auth = match endpoint {
-                Endpoint::Native => "native",
-                Endpoint::ApiKey { .. } => "api-key",
+                Endpoint::Native => "Official login",
+                Endpoint::ApiKey { .. } => "API-key endpoint",
             };
-            (name.clone(), format!("{name} ({auth})"))
+            (name.clone(), format!("{} · {auth}", display_field(name)))
         })
         .collect()
 }
@@ -591,9 +598,13 @@ fn choose_value<T>(
 where
     T: AsRef<str>,
 {
-    let arguments = vec![
+    let mut arguments = vec![
         "--read0".to_owned(),
         "--print0".to_owned(),
+        "--height=90%".to_owned(),
+        "--layout=reverse".to_owned(),
+        "--border=rounded".to_owned(),
+        "--info=inline".to_owned(),
         format!("--prompt={prompt}> "),
         format!(
             "--header=Type to filter · {} choose · {} cancel",
@@ -607,6 +618,9 @@ where
         "--delimiter=\\t".to_owned(),
         "--with-nth=2".to_owned(),
     ];
+    if supports_no_tty_default(executable) {
+        arguments.push("--no-tty-default".to_owned());
+    }
     let output = run_fzf(
         executable,
         arguments,
