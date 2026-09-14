@@ -15,19 +15,50 @@ use tempfile::TempDir;
 
 struct RunningTui {
     _master: Box<dyn MasterPty>,
-    child: Box<dyn Child + Send + Sync>,
+    child: ChildGuard,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     output: String,
     screen: Arc<Mutex<vt100::Parser>>,
     receiver: Receiver<String>,
 }
 
-impl RunningTui {
-    fn abort(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+struct ChildGuard {
+    child: Box<dyn Child + Send + Sync>,
+    armed: bool,
+}
+
+impl ChildGuard {
+    fn abort(&mut self) -> bool {
+        if !self.armed {
+            return true;
         }
+        if self.child.try_wait().ok().flatten().is_some() {
+            self.armed = false;
+            return true;
+        }
+        let _ = self.child.kill();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if self.child.try_wait().ok().flatten().is_some() {
+                self.armed = false;
+                return true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        self.armed = false;
+        false
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.abort();
+    }
+}
+
+impl RunningTui {
+    fn abort(&mut self) -> bool {
+        self.child.abort()
     }
 
     fn screen_contents(&self) -> String {
@@ -44,15 +75,19 @@ impl RunningTui {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 let output = self.output.clone();
-                self.abort();
-                panic!("timed out waiting for {description:?}; output: {output}");
+                let child_terminated = self.abort();
+                panic!(
+                    "timed out waiting for {description:?}; child terminated: {child_terminated}; output: {output}"
+                );
             }
             match self.receiver.recv_timeout(remaining) {
                 Ok(chunk) => self.output.push_str(&chunk),
                 Err(error) => {
                     let output = self.output.clone();
-                    self.abort();
-                    panic!("timed out waiting for {description:?}: {error}; output: {output}");
+                    let child_terminated = self.abort();
+                    panic!(
+                        "timed out waiting for {description:?}: {error}; child terminated: {child_terminated}; output: {output}"
+                    );
                 }
             }
         }
@@ -120,13 +155,14 @@ impl RunningTui {
     fn finish(mut self) -> (u32, String) {
         let deadline = Instant::now() + Duration::from_secs(10);
         let status = loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
+            if let Some(status) = self.child.child.try_wait().unwrap() {
+                self.child.armed = false;
                 break status;
             }
             if Instant::now() >= deadline {
                 let output = self.output.clone();
-                self.abort();
-                panic!("TUI did not exit; output: {output}");
+                let child_terminated = self.abort();
+                panic!("TUI did not exit; child terminated: {child_terminated}; output: {output}");
             }
             thread::sleep(Duration::from_millis(20));
         };
@@ -292,26 +328,21 @@ fn spawn_tui(root: &TempDir, size: PtySize, arguments: &[&str]) -> RunningTui {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut buffer = [0; 4096];
-        let mut pending = String::new();
+        let mut pending = Vec::new();
         while let Ok(count) = reader.read(&mut buffer) {
             if count == 0 {
                 break;
             }
             let text = String::from_utf8_lossy(&buffer[..count]).into_owned();
             response_screen.lock().unwrap().process(&buffer[..count]);
-            pending.push_str(&text);
-            let position_queries = pending.match_indices("\x1b[6n").count();
-            if position_queries > 0 {
-                if let Ok(mut writer) = response_writer.lock() {
-                    for _ in 0..position_queries {
-                        let _ = writer.write_all(b"\x1b[1;1R");
-                    }
-                    let _ = writer.flush();
+            let position_queries = position_queries(&mut pending, &buffer[..count]);
+            if position_queries > 0
+                && let Ok(mut writer) = response_writer.lock()
+            {
+                for _ in 0..position_queries {
+                    let _ = writer.write_all(b"\x1b[1;1R");
                 }
-                pending.clear();
-            } else if pending.len() > 3 {
-                let keep_from = pending.len().saturating_sub(3);
-                pending.drain(..keep_from);
+                let _ = writer.flush();
             }
             if sender.send(text).is_err() {
                 break;
@@ -320,12 +351,25 @@ fn spawn_tui(root: &TempDir, size: PtySize, arguments: &[&str]) -> RunningTui {
     });
     RunningTui {
         _master: pair.master,
-        child,
+        child: ChildGuard { child, armed: true },
         writer,
         output: String::new(),
         screen,
         receiver,
     }
+}
+
+fn position_queries(pending: &mut Vec<u8>, chunk: &[u8]) -> usize {
+    const QUERY: &[u8] = b"\x1b[6n";
+    pending.extend_from_slice(chunk);
+    let count = pending
+        .windows(QUERY.len())
+        .filter(|window| *window == QUERY)
+        .count();
+    if pending.len() >= QUERY.len() {
+        pending.drain(..pending.len() - (QUERY.len() - 1));
+    }
+    count
 }
 
 fn default_size() -> PtySize {
@@ -341,48 +385,55 @@ fn wait_for_root(tui: &mut RunningTui) {
     tui.wait_for("Nomad");
 }
 
-fn close_help_with_escape(tui: &mut RunningTui) {
-    tui.settle();
-    let phase = tui.cursor();
-    tui.send(b"\x1bOP");
-    tui.wait_for_output_after(phase);
-    tui.settle();
-    tui.send(b"z");
-    tui.wait_for_after(phase, "z");
-    tui.send(&[127]);
+fn root_query_visible(screen: &str, query: &str) -> bool {
+    screen.contains("Nomad")
+        && if query.is_empty() {
+            screen.contains("Search:")
+        } else {
+            screen.contains(&format!("Search: {query}"))
+        }
 }
 
-fn close_agent_with_escape(tui: &mut RunningTui) {
+fn close_help_with_escape(tui: &mut RunningTui, query: &str) {
     tui.settle();
     let phase = tui.cursor();
     tui.send(b"\x1b");
-    tui.wait_for_output_after(phase);
-    tui.settle();
-    tui.send(b"\x1bOP");
-    tui.wait_for_after(phase, "Help");
+    tui.wait_until("closed help with query preserved", |output, screen| {
+        output.len() > phase
+            && !screen.contains("Cancel from anywhere")
+            && root_query_visible(screen, query)
+    });
+}
+
+fn close_agent_with_escape(tui: &mut RunningTui, query: &str) {
     tui.settle();
     let phase = tui.cursor();
-    tui.send(b"\x1bOP");
-    tui.wait_for_output_after(phase);
+    tui.send(b"\x1b");
+    tui.wait_until(
+        "closed agent menu with query preserved",
+        |output, screen| {
+            output.len() > phase
+                && !screen.contains("Filter profiles")
+                && root_query_visible(screen, query)
+        },
+    );
 }
 
 fn close_endpoint_with_escape(tui: &mut RunningTui) {
     tui.settle();
     let phase = tui.cursor();
     tui.send(b"\x1b");
-    tui.wait_for_output_after(phase);
-    tui.wait_for_after(phase, "continue");
+    tui.wait_until("returned to endpoint agent step", |output, screen| {
+        output.len() > phase && screen.contains("Select agent for temporary endpoint")
+    });
     tui.settle();
     let phase = tui.cursor();
     tui.send(b"\x1b");
-    tui.wait_for_output_after(phase);
-    tui.settle();
-    tui.send(b"\x1bOP");
-    tui.wait_for_after(phase, "Help");
-    tui.settle();
-    let phase = tui.cursor();
-    tui.send(b"\x1bOP");
-    tui.wait_for_output_after(phase);
+    tui.wait_until("closed endpoint staging", |output, screen| {
+        output.len() > phase
+            && !screen.contains("Select agent for temporary endpoint")
+            && root_query_visible(screen, "")
+    });
 }
 
 fn move_modal_down(tui: &mut RunningTui, count: usize) {
@@ -438,6 +489,19 @@ fn mixed_profiles() -> [ProfileSpec<'static>; 3] {
 }
 
 #[test]
+fn terminal_query_scanner_handles_split_multibyte_output() {
+    let mut pending = Vec::new();
+    let border = "┌".as_bytes();
+
+    assert_eq!(position_queries(&mut pending, &border[..1]), 0);
+    assert_eq!(position_queries(&mut pending, &border[1..]), 0);
+    assert_eq!(position_queries(&mut pending, b"\x1b["), 0);
+    assert_eq!(position_queries(&mut pending, b"6n"), 1);
+    assert_eq!(position_queries(&mut pending, b"row\x1b[6n\x1b[6n"), 2);
+    assert!(pending.len() <= 3);
+}
+
+#[test]
 fn omitted_selector_uses_native_tui_and_fuzzy_matches_hidden_description() {
     let profiles = (0..10)
         .map(|index| {
@@ -482,14 +546,14 @@ fn help_and_agent_cancel_preserve_query_and_cursor() {
     let phase = tui.cursor();
     tui.send(b"\x1bOP");
     tui.wait_for_after(phase, "Help");
-    close_help_with_escape(&mut tui);
+    close_help_with_escape(&mut tui, "shared");
     type_text(&mut tui, "x");
     tui.send(&[127]);
 
     let phase = tui.cursor();
     tui.send(&[12]);
     tui.wait_for_after(phase, "Choose");
-    close_agent_with_escape(&mut tui);
+    close_agent_with_escape(&mut tui, "shared");
     type_text(&mut tui, "x");
     tui.send(&[127]);
     tui.send(b"\r");
@@ -624,7 +688,7 @@ fn custom_tui_keybindings_dispatch_modal_and_accept() {
     let phase = tui.cursor();
     tui.send(&[15]);
     tui.wait_for_after(phase, "Choose");
-    close_agent_with_escape(&mut tui);
+    close_agent_with_escape(&mut tui, "");
     tui.send(&[8]);
     let (code, output) = tui.finish();
 
